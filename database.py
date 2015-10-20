@@ -12,7 +12,7 @@ class Database():
         self.isolation_level=None
         
     def begin(self, isolation_level=''):
-        levels = [None, '', 'immediate', 'exclusize']
+        levels = [None, '', 'immediate', 'exclusive']
         if levels.index(isolation_level) > levels.index(self.isolation_level):
             self.connection.execute('begin ' + isolation_level)
         self.transaction_depth += 1
@@ -208,7 +208,7 @@ class TableDir(Table):
             self.connection.executescript('''
                 update TableDir set FilesSize =
                         (select sum(FileSize) from TableFile
-                        where TableFile.DirID=TableDir.DirID)
+                        where TableFile.DirID=TableDir.DirID and TableFile.CopyState=0)
                 ''')
         except:
             self.database.rollback()
