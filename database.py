@@ -1,6 +1,7 @@
-import sqlite3, csv, shutil, time
+import sqlite3, csv, time
 from enum import IntEnum
 from pathlib import PurePath
+from shutil import disk_usage
 
 
 class Database():
@@ -315,6 +316,16 @@ class TableDir(Table):
         else:   
             self.database.commit()
 
+    def removedir(self, dirid):
+        self.database.begin()
+        try:
+            self.cursor.execute('''delete from TableDir where DirID=?''',
+                                (dirid,))
+        except:
+            self.database.rollback()
+            raise
+        else:
+            self.database.commit()
         
 class TableFile(Table):
     def __init__(self, database):
@@ -378,13 +389,14 @@ class TableFile(Table):
             self.database.commit()
             return file
 
-    def getfilefrom(self, dirid, copystate):
+    def getfilefrom(self, dirid, copystate, maxsize):
         self.database.begin()
         try:
             self.cursor.execute('''select file.* from TableFile as file
                                 inner join TableDir as dir on file.DirID=dir.DirID
-                                where file.DirID=? and file.CopyState=? and file.ActiveState=? and dir.ActiveState=?''',
-                                (dirid, copystate, ActiveState.active, ActiveState.active))
+                                where file.DirID=? and file.CopyState=? and file.ActiveState=?
+                                and file.FileSize<? and dir.ActiveState=?''',
+                                (dirid, copystate, ActiveState.active, maxsize, ActiveState.active))
             file = self.cursor.fetchone()
         except:
             self.database.rollback()
@@ -620,16 +632,19 @@ class TaskManager:
         self.database.begin()
         try:
             task = self.tabletask.gettask(taskid)
+            directory = self.tabledir.getdir(task['DirID'])
             if copystate == CopyState.busy or copystate == CopyState.failed:
                 self.tabletask.updatecopystate(task['TaskID'], copystate)
-                self.tabledir.updatecopystate(task['DirID'], copystate)            
                 self.tablehost.updatecopystate(task['DirID'], copystate)
                 self.tabledest.updatecopystate(task['DestID'], copystate)
+                if directory['CopyState'] != CopyState.finished:
+                    self.tabledir.updatecopystate(task['DirID'], copystate)            
             else:
                 self.tabletask.updatecopystate(task['TaskID'], copystate)
-                self.tabledir.updatecopystate(task['DirID'], copystate)            
                 self.tablehost.updatecopystate(task['DirID'], CopyState.idle)               
                 self.tabledest.updatecopystate(task['DestID'], CopyState.idle)
+                if directory['CopyState'] != CopyState.finished:
+                    self.tabledir.updatecopystate(task['DirID'], copystate)            
         except:
             self.database.rollback()
             raise
@@ -644,7 +659,7 @@ class TaskManager:
             for row in self.cursor.execute('''select * from TableDest
                                      where ActiveState=? and CopyState=? ''',
                                      (ActiveState.active, CopyState.idle)):
-                usage = shutil.disk_usage(row['DiskPath'])
+                usage = disk_usage(row['DiskPath'])
                 if usage.free > freeusage:
                     freeusage = usage.free  
                     dest = row    
@@ -671,15 +686,15 @@ class TaskManager:
             if not task:
                 dest = self.getdestmax()
                 if dest:     
-                    freeusage = shutil.disk_usage(dest['DiskPath']).free -  pow(2, 30)
-                    if freeusage < 0:
-                        freeusage = 0
+##                    freeusage = shutil.disk_usage(dest['DiskPath']).free -  pow(2, 30)
+##                    if freeusage < 0:
+##                        freeusage = 0
                     directory = self.cursor.execute('''select * from TableDir
                         inner join TableHost on TableDir.HostID=TableHost.HostID
-                        where TableDir.ActiveState=? and TableDir.CopyState=? and TableDir.FilesSize<? 
+                        where TableDir.ActiveState=? and TableDir.CopyState=? 
                         and TableHost.ActiveState=? and TableHost.CopyState=?
                         order by TableDir.FilesSize desc''',
-                        (ActiveState.active, CopyState.idle, freeusage, 
+                        (ActiveState.active, CopyState.idle, 
                          ActiveState.active, CopyState.idle)).fetchone()
                     if directory:
                         self.cursor.execute('''insert into TableTask(DestID, DirID)

@@ -1,6 +1,7 @@
 import shutil, os, time, database
 
 from pathlib import PurePath
+from shutil import disk_usage
 
 db = database.Database()
 conn = db.connection
@@ -37,7 +38,7 @@ def log(destid, dirname, filename, extname, srcfilepath):
     logname = '..\\log\\' + destid + '.log'
     with open(logname, 'a') as logfile:
       logfile.write(','.join((destid, dirname, filename, extname, srcfilepath)) + '\n')
-            
+        
 def copyfiles(destid, dirid):
     dest = tabledest.getdest(destid)
     directory = tabledir.getdir(dirid)
@@ -48,7 +49,8 @@ def copyfiles(destid, dirid):
         if not (os.path.exists(srcdirpath) and os.path.exists(destdirpath)):
             raise OSError('No such direcory') 
             
-        file = tablefile.getfilefrom(dirid, database.CopyState.idle)
+        freeusage = disk_usage(destdirpath).free - pow(2,30)
+        file = tablefile.getfilefrom(dirid, database.CopyState.idle, freeusage)
         if file:
             srcfilepath = getfilepath(file)
             destfilepath = str(PurePath(destdirpath).joinpath(file['FileName'] + file['ExtName']))
@@ -62,6 +64,7 @@ def copyfiles(destid, dirid):
                 tablefile.updatecopystate(file['FileID'], destid, database.CopyState.finished)
                 log(destid, directory['DirName'], file['FileName'], file['ExtName'], srcfilepath)
         else:
+            tabledir.updatecopystate(dirid, database.CopyState.finished)
             break;
 
 def makedirs(dirpath):
